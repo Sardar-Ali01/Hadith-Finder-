@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Islamic Chatbot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    :root { font-family: system-ui, Arial, sans-serif; }
+    body { margin: 0; background:#0b1220; color:#e8eefc; }
+    header { padding: 16px; border-bottom: 1px solid #1c2740; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
+    .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+    .chip { padding:6px 10px; border-radius:16px; background:#16213a; border:1px solid #263152; cursor:pointer; }
+    .chip.active { background:#27498b; border-color:#3c61a8; }
+    .row { display:flex; gap:8px; margin-top:12px; }
+    input[type="text"] { flex:1; padding:12px; border-radius:10px; border:1px solid #2a3760; background:#0f1730; color:#e8eefc; }
+    select, button { padding:12px; border-radius:10px; border:1px solid #2a3760; background:#16213a; color:#e8eefc; cursor:pointer; }
+    button { background:#27498b; border-color:#3c61a8; }
+    .card { background:#0f1730; border:1px solid #1c2740; border-radius:14px; padding:12px; margin-top:12px; }
+    .muted { color:#9bb1e1; font-size: 0.95em; }
+    .hadith { white-space: pre-wrap; line-height:1.5; }
+    .ref { font-weight:600; }
+    .badge { display:inline-block; padding:2px 6px; border:1px solid #3c61a8; border-radius:8px; margin-left:6px; font-size:.8em;}
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <h2>Islamic Chatbot</h2>
+    <div class="muted">Select a Hadith collection to filter (optional):</div>
+    <div id="book-chips" class="chips"></div>
+  </header>
+
+  <main class="wrap">
+    <div class="row">
+      <input id="query" type="text" placeholder='Ask a question or type a reference e.g. "Sahih Bukhari 719"'/>
+      <select id="lang">
+        <option value="english">English</option>
+        <option value="urdu">Urdu</option>
+        <option value="arabic">Arabic</option>
+      </select>
+      <button id="go">Ask</button>
+    </div>
+
+    <div id="notice" class="muted" style="margin-top:10px;"></div>
+
+    <section id="answer" class="card" style="display:none;"></section>
+    <section id="results"></section>
+  </main>
+
+  <script>
+    const API_BASE = "http://localhost:8000";
+    let selectedBook = null;
+    let books = [];
+
+    async function loadBooks() {
+      const res = await fetch(`${API_BASE}/api/books`);
+      books = await res.json();
+      const el = document.getElementById('book-chips');
+      el.innerHTML = "";
+      books.forEach(b => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        chip.textContent = b.name || b.slug || 'Unknown';
+        chip.onclick = () => {
+          if (selectedBook === b.slug) {
+            selectedBook = null;
+            chip.classList.remove('active');
+          } else {
+            selectedBook = b.slug;
+            [...el.children].forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+          }
+        };
+        el.appendChild(chip);
+      });
+    }
+
+    async function search() {
+      const q = document.getElementById('query').value.trim();
+      const lang = document.getElementById('lang').value;
+      document.getElementById('notice').textContent = "";
+
+      const payload = { query: q, bookSlug: selectedBook, lang, pageSize: 5 };
+      const sres = await fetch(`${API_BASE}/api/hadith/search`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      if (!sres.ok) {
+        const t = await sres.text();
+        alert("Search failed: " + t);
+        return;
+      }
+      const searchResult = await sres.json();
+
+      const ares = await fetch(`${API_BASE}/api/answer`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ question: q, apiResult: searchResult })
+      });
+      const answer = await ares.json();
+      const answerEl = document.getElementById('answer');
+      answerEl.style.display = 'block';
+      answerEl.textContent = answer.answer;
+
+      renderHadith(searchResult);
+
+      if (searchResult.noBookMatch) {
+        document.getElementById('notice').textContent =
+          'No Hadith related to your query found in that book.';
+      }
+    }
+
+    function renderHadith(result) {
+      const box = document.getElementById('results');
+      box.innerHTML = "";
+      (result.hits || []).slice(0, 5).forEach(h => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        const title = document.createElement('div');
+        title.innerHTML = `<span class="ref">${(h.bookName || h.book) || 'Unknown'}</span> #${h.hadithNumber ?? '—'} ${h.status ? `<span class="badge">${h.status}</span>` : ''}`;
+        const ar = h.textArabic ? `<div class="hadith" style="margin-top:8px; font-size:1.05em;">${h.textArabic}</div>` : '';
+        const en = h.textEnglish ? `<div class="hadith muted" style="margin-top:8px;">${h.textEnglish}</div>` : '';
+        const ur = h.textUrdu ? `<div class="hadith muted" style="margin-top:8px;">${h.textUrdu}</div>` : '';
+        card.innerHTML = title + ar + en + ur;
+        box.appendChild(card);
+      });
+      if ((result.hits || []).length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'card muted';
+        empty.textContent = 'No hadith found for your query.';
+        box.appendChild(empty);
+      }
+    }
+
+    document.getElementById('go').addEventListener('click', search);
+    document.getElementById('query').addEventListener('keydown', (e)=>{
+      if (e.key === 'Enter') search();
+    });
+
+    loadBooks();
+  </script>
+</body>
+</html>
